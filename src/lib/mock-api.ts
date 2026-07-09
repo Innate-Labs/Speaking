@@ -180,14 +180,30 @@ export async function generateReport(practiceId: string): Promise<PracticeReport
     fileContent = localStorage.getItem(`speakcoach_file_${practiceId}`) ?? "";
   }
 
+  // 本次之前的历史总分：用于打分校准（前松后严）和百分位计算
+  const prevScores = records
+    .filter((r) => r.id !== practiceId && r.status === "completed" && typeof r.totalScore === "number")
+    .map((r) => r.totalScore as number);
+
   // 调用服务端 API（DeepSeek）
   try {
     const res = await fetch("/api/report/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ practiceId, transcript, fileName, fileContent }),
+      body: JSON.stringify({
+        practiceId,
+        transcript,
+        fileName,
+        fileContent,
+        practiceCount: prevScores.length,
+      }),
     });
     const data = await res.json();
+
+    // 百分位基于本地历史真实计算：超过自己多少比例的历史练习；首次练习无基准，不展示
+    const percentile = prevScores.length
+      ? Math.round((prevScores.filter((s) => s < data.totalScore).length / prevScores.length) * 100)
+      : null;
 
     // 如果返回了 fallback 标记，仍然使用数据但不报错
     // 映射 7-agent 架构字段（overall + coaches）
@@ -195,7 +211,7 @@ export async function generateReport(practiceId: string): Promise<PracticeReport
       id: data.id ?? genId(),
       practiceId,
       totalScore: data.totalScore,
-      percentile: data.percentile,
+      percentile,
       overall: data.overall,
       coaches: data.coaches,
       createdAt: data.createdAt ?? new Date().toISOString(),

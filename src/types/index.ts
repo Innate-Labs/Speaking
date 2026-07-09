@@ -46,7 +46,7 @@ export interface PracticeReport {
   id: string;
   practiceId: string;
   totalScore: number;
-  percentile: number; // 超过 X% 的练习记录
+  percentile: number | null; // 超过自己 X% 的历史练习，首次练习为 null（不展示）
   overall: OverallAssessment;
   coaches: CoachReport[];
   createdAt: string;

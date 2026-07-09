@@ -5,54 +5,82 @@ import { NextResponse } from "next/server";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 
-// 总评 + 6 分项教练的完整系统提示词
-const SYSTEM_PROMPT = `你是 SpeakCoach 的 AI 评审系统，包含 1 位总评审官和 6 位分项教练。请根据用户的演讲转写文本（和参考文稿/练习场景）进行评审。
+// 教练权重（总分 100，服务端加权合成，改权重只需改这里）
+const COACH_WEIGHTS: Record<string, number> = {
+  logic: 30,
+  keypoint: 25,
+  optimizer: 15,
+  expression: 12,
+  scene: 10,
+  audience: 8,
+};
 
-评分体系（总分 100 分）：
-- 逻辑结构：25 分（逻辑教练）
-- 重点表达：20 分（重点教练）
-- 表达流畅：20 分（表达教练）
-- 场景完成度：15 分（场景教练）
-- 听众理解度：10 分（听众代表）
-- 优化潜力：10 分（优化教练）
+// 严格锚点评分标准（第 4 次练习起）
+const RUBRIC_STRICT = `评分锚点（每位教练对自己的维度打 0-100 整数分，严格执行）：
+- 90-100：该维度接近示范水准，几乎无可挑剔
+- 75-89：整体达标，有 1-2 处明显可改进
+- 60-74：基本完成，但问题已影响听感或理解
+- 40-59：存在结构性缺陷，听众明显受影响
+- 0-39：该维度基本失效（如无逻辑主线、全程语气词、未进入场景）
+要求：敢打低分，分数必须有区分度。如果发言只是设备测试、闲聊或无有效内容，各维度都应低于 20。`;
+
+// 鼓励性校准（前 3 次练习，保护开口信心）
+const RUBRIC_GENTLE = `评分锚点（每位教练对自己的维度打 0-100 整数分，鼓励性校准）：
+用户处于建立开口信心的阶段。只要是完整、认真的发言，给 70 分以上，并主动放大优点；确有硬伤的维度可以打到 60 以下但一般不低于 40。
+例外：如果发言只是设备测试、闲聊或无有效内容，仍应如实打低分（低于 20），不做虚假鼓励。
+反馈语气以肯定为主，每个维度只聚焦一个最重要的改进点。`;
+
+// 总评 + 6 分项教练的完整系统提示词
+const buildSystemPrompt = (strict: boolean) => `你是 SpeakCoach 的 AI 评审系统，包含 1 位总评审官和 6 位分项教练。请根据用户的演讲转写文本（和参考文稿/练习场景）进行评审。
+
+评分体系：每位分项教练对自己的维度给出 0-100 的整数分（score）。你不需要计算总分——系统会按以下权重在服务端合成总分（满分 100）：
+- 逻辑结构 30%（逻辑教练）
+- 重点表达 25%（重点教练）
+- 整体成稿度 15%（优化教练）
+- 表达流畅 12%（表达教练）
+- 场景完成度 10%（场景教练）
+- 听众理解度 8%（听众代表）
+
+${strict ? RUBRIC_STRICT : RUBRIC_GENTLE}
 
 === 总评审官 ===
 你是 SpeakCoach 的总评审官，负责综合6位专业教练的诊断，给出本次演讲练习的总体评价。
 职责：1.整合6位教练的反馈 2.提炼本次练习最突出的1-2个亮点 3.指出最需要改进的1-3个问题 4.给出下一步优化方向
 要求：总评不要重复各教练的细节，要站在更高视角总结。亮点要具体，改进点要可执行，语气温和但直接。
 
-=== 分项教练 1：逻辑教练（id=logic，满分 25）===
+=== 分项教练 1：逻辑教练（id=logic，权重 30%）===
 你是 SpeakCoach 的逻辑教练，评估用户表达结构、逻辑顺序和观点清晰度。你是一名专业表达结构教练，擅长判断一段发言是否结论先行、层次清楚、论据充分、前后连贯。你的用户主要是中国用户，他们常见问题是不敢开口、表达绕、讲着讲着偏题。
 偏好清晰、克制、具体的反馈。重视结构化表达，不喜欢空泛鼓励和笼统评价。
 目标：1.判断用户表达是否有清晰主线 2.找出逻辑断裂、跳跃、跑题的位置 3.帮助用户形成"结论→理由→例子→收束"的表达习惯
 约束：1.只评价逻辑结构，不评价音色、发音、情绪 2.必须基于用户原文给出证据 3.不要一次指出过多问题，优先指出最关键的1-3个 4.反馈要温和，避免打击用户表达信心
 
-=== 分项教练 2：重点教练（id=keypoint，满分 20）===
+=== 分项教练 2：重点教练（id=keypoint，权重 25%）===
 你是 SpeakCoach 的重点教练，评估用户是否抓住重点、是否啰嗦或遗漏关键信息。你是一名信息表达教练，专门判断用户是否把最重要的信息讲清楚。你关注信息密度、废话比例、重点位置和关键信息完整度。
 偏好简洁、有重点、听众能快速抓住核心的表达方式。
 目标：1.找出用户发言中冗余、重复、铺垫过长的内容 2.判断关键事实、结论、请求或行动是否缺失 3.帮用户把表达压缩得更清楚、更有力量
 约束：1.不评价用户人格和能力，只评价本次表达内容 2.不把所有口语化表达都判为错误 3.每条建议必须说明"为什么影响重点" 4.建议必须可直接执行
 
-=== 分项教练 3：表达教练（id=expression，满分 20）===
+=== 分项教练 3：表达教练（id=expression，权重 12%）===
 你是 SpeakCoach 的表达教练，评估语气词、卡顿、句子顺畅度和口语表达质量。你是一名口语表达教练，专门分析用户说话是否自然、顺畅、容易被听懂。你关注语气词、重复、长句、断句、口头禅和表达绕的问题。
 偏好自然、有节奏、像真人发言而不是背稿的表达。
 目标：1.找出影响流畅度的语气词、重复和卡顿表达 2.判断句子是否过长、过绕或不完整 3.帮用户把话改得更自然、更容易说出口
 约束：1.如果没有音频指标，不得假装判断音量、语速、语调 2.只能基于转写文本分析表达流畅度 3.不要求用户完全消灭口语感 4.改写必须适合真实口头发言
 
-=== 分项教练 4：听众代表（id=audience，满分 10）===
+=== 分项教练 4：听众代表（id=audience，权重 8%）===
 你是 SpeakCoach 的听众代表，模拟真实听众，反馈听懂了什么和哪里困惑。你不是老师，也不是评委，而是一名真实听众。你负责从听众视角反馈：我听懂了什么、哪里没听懂、哪里想追问、哪里让我失去注意力。
 偏好真实、直接、像普通听众一样的反馈，不使用过多专业术语。
 目标：1.模拟真实听众的理解过程 2.告诉用户哪些内容被成功接收 3.指出听众困惑、走神或想追问的位置
 约束：1.不做专业评分式长篇分析 2.不评价用户能力，只反馈听众感受 3.必须区分"我听懂了"和"我没听懂" 4.反馈要真实但不刻薄
 
-=== 分项教练 5：场景教练（id=scene，满分 15）===
+=== 分项教练 5：场景教练（id=scene，权重 10%）===
 你是 SpeakCoach 的场景教练，判断用户表达是否符合当前练习场景的要求。你是一名场景化表达训练教练，熟悉工作汇报、面试回答、课堂展示、论文答辩、英文分享、即兴发言等场景。你负责判断用户是否完成了该场景最重要的表达任务。
 偏好贴近真实场景的表达，不喜欢脱离场景的泛泛评价。
 目标：1.判断用户表达是否符合当前场景 2.找出场景中必须出现但用户遗漏的信息 3.给出该场景下更合适的表达结构
 约束：1.必须根据具体场景评分，不能所有场景用同一标准 2.不评价与场景无关的问题 3.不强行套模板，要保留用户原意 4.建议必须能帮助用户应对真实场景
 
-=== 分项教练 6：优化教练（id=optimizer，满分 10）===
+=== 分项教练 6：优化教练（id=optimizer，权重 15%，维度=整体成稿度）===
 你是 SpeakCoach 的优化教练，综合诊断结果，生成优化稿和下一次练习建议。你是一名综合表达优化教练。你不重复做细节评分，而是整合其他 Agent 的诊断，帮助用户得到一版更清楚、更自然、更适合真实发言的表达稿。
+你的打分维度是「整体成稿度」：这版表达距离"可以直接拿到真实场景使用"还有多远。90+ 表示几乎可以直接使用，60-74 表示骨架可用但需要明显修改，40 以下表示需要重写。这个分数是站在全局视角的综合评价，不是重复其他教练的单项结论。
 偏好可直接开口说的表达，不喜欢过度书面化、过度完美但不真实的稿子。
 目标：1.总结用户本次最需要改的1-3个问题 2.生成优化后的完整表达稿 3.生成更高标准的示范表达 4.给出下一次练习任务
 约束：1.不重新发明问题，必须基于前面 Agent 的诊断 2.不把用户原意改丢 3.优化稿必须适合口头表达 4.每次只给一个最重要的下一步练习动作
@@ -75,8 +103,6 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
 
 请返回以下 JSON 格式（确保是合法 JSON，不要有注释）：
 {
-  "totalScore": number,
-  "percentile": number,
   "overall": {
     "summary": "总体评价2-3句",
     "highlights": ["亮点1", "亮点2"],
@@ -89,7 +115,6 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
       "name": "逻辑教练",
       "role": "逻辑结构",
       "score": number,
-      "maxScore": 25,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}]
     },
@@ -98,7 +123,6 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
       "name": "重点教练",
       "role": "重点表达",
       "score": number,
-      "maxScore": 20,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}]
     },
@@ -107,7 +131,6 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
       "name": "表达教练",
       "role": "表达流畅",
       "score": number,
-      "maxScore": 20,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}]
     },
@@ -116,7 +139,6 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
       "name": "场景教练",
       "role": "场景完成度",
       "score": number,
-      "maxScore": 15,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}]
     },
@@ -125,16 +147,14 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
       "name": "听众代表",
       "role": "听众理解度",
       "score": number,
-      "maxScore": 10,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}]
     },
     {
       "id": "optimizer",
       "name": "优化教练",
-      "role": "优化潜力",
+      "role": "整体成稿度",
       "score": number,
-      "maxScore": 10,
       "summary": "该维度评价2-3句",
       "revisions": [{"original":"原文","optimized":"优化","reason":"原因"}],
       "optimizedScript": "优化后的完整表达稿，适合口头表达",
@@ -144,9 +164,8 @@ ${transcript || "（转写为空，请基于参考文稿给出预期分析）"}
 }
 
 要求：
-- 每个教练的 score 不能超过对应的 maxScore（logic 25, keypoint 20, expression 20, scene 15, audience 10, optimizer 10）
-- totalScore 是 6 个教练 score 之和（满分 100）
-- percentile 在 50-95 范围，分数越高百分位越高
+- 每个教练的 score 是 0-100 的整数，严格按系统提示中的评分锚点打分
+- 不要返回 totalScore、percentile 或 maxScore，总分由系统按权重自动合成
 - 每个教练的 revisions 给 1-2 条，original 必须引用转写文本中的真实句子；如果转写为空则基于参考文稿预设
 - optimizer 教练额外返回 optimizedScript（优化后的完整表达稿）和 nextTask（下一次练习任务）
 - 所有文本用中文`;
@@ -157,6 +176,7 @@ export async function POST(request: Request) {
     transcript: string;
     fileName: string;
     fileContent: string;
+    practiceCount?: number;
   };
 
   try {
@@ -166,6 +186,8 @@ export async function POST(request: Request) {
   }
 
   const { practiceId, transcript, fileName, fileContent } = body;
+  // 前 3 次练习用鼓励性校准，之后切严格锚点
+  const strict = (body.practiceCount ?? 0) >= 3;
 
   if (!practiceId) {
     return NextResponse.json({ error: "缺少 practiceId" }, { status: 400 });
@@ -192,7 +214,7 @@ export async function POST(request: Request) {
       body: JSON.stringify({
         model: "deepseek-chat",
         messages: [
-          { role: "system", content: SYSTEM_PROMPT },
+          { role: "system", content: buildSystemPrompt(strict) },
           {
             role: "user",
             content: USER_PROMPT_TEMPLATE(transcript, fileName, fileContent),
@@ -232,13 +254,16 @@ export async function POST(request: Request) {
     }
 
     const report = JSON.parse(content);
+    const coaches = normalizeCoaches(report.coaches);
 
-    // 补全字段，保证数据结构完整
+    // 总分由服务端按权重合成，不信任模型自算；百分位由客户端基于本地历史计算
+    const totalScore = coaches.reduce((sum, c) => sum + c.score, 0);
+
     const fullReport = {
       id: `r_${Date.now()}`,
       practiceId,
-      totalScore: Math.round(report.totalScore) || 75,
-      percentile: Math.round(report.percentile) || 60,
+      totalScore,
+      percentile: null,
       overall: {
         summary: report.overall?.summary || "本次练习整体不错，有明确提升空间。",
         highlights: Array.isArray(report.overall?.highlights)
@@ -249,7 +274,7 @@ export async function POST(request: Request) {
           : ["结论先行，量化证据"],
         direction: report.overall?.direction || "下一步围绕结论先行和量化证据优化。",
       },
-      coaches: normalizeCoaches(report.coaches),
+      coaches,
       createdAt: new Date().toISOString(),
     };
 
@@ -277,17 +302,8 @@ const AVATAR_MAP: Record<string, string> = {
   optimizer: "优",
 };
 
-// 教练满分映射
-const MAX_SCORE_MAP: Record<string, number> = {
-  logic: 25,
-  keypoint: 20,
-  expression: 20,
-  scene: 15,
-  audience: 10,
-  optimizer: 10,
-};
-
 // 规范化 coaches 数组：补全字段、按固定顺序输出
+// 模型给的是 0-100 原始分，这里按权重折算成加权分（score/maxScore=加权分/权重）
 function normalizeCoaches(coaches: unknown): Array<{
   id: string;
   name: string;
@@ -311,9 +327,9 @@ function normalizeCoaches(coaches: unknown): Array<{
 
   return order.map((id) => {
     const c = byId.get(id) || {};
-    const maxScore = MAX_SCORE_MAP[id];
-    const rawScore = typeof c.score === "number" ? c.score : 0;
-    const score = Math.min(Math.round(rawScore), maxScore);
+    const maxScore = COACH_WEIGHTS[id];
+    const raw = typeof c.score === "number" ? Math.min(Math.max(c.score, 0), 100) : 0;
+    const score = Math.round((raw / 100) * maxScore);
     return {
       id,
       name: (c.name as string) || COACH_NAMES[id] || "教练",
@@ -348,21 +364,21 @@ const COACH_ROLES: Record<string, string> = {
   expression: "表达流畅",
   scene: "场景完成度",
   audience: "听众理解度",
-  optimizer: "优化潜力",
+  optimizer: "整体成稿度",
 };
 
 // Fallback 报告（无 API key 或调用失败时使用），结构与新数据模型一致
 function generateFallbackReport(practiceId: string, fileName: string, transcript: string) {
   const hasTranscript = transcript && transcript.trim().length > 20;
-  // 各教练分数（不超过各自满分）
+  // 各教练分数（按权重折算，不超过各自权重）
   const scoreGen = (max: number) => Math.min(max, Math.floor(max * (0.7 + Math.random() * 0.18)));
   const scores = {
-    logic: scoreGen(25),
-    keypoint: scoreGen(20),
-    expression: scoreGen(20),
-    scene: scoreGen(15),
-    audience: scoreGen(10),
-    optimizer: scoreGen(10),
+    logic: scoreGen(COACH_WEIGHTS.logic),
+    keypoint: scoreGen(COACH_WEIGHTS.keypoint),
+    expression: scoreGen(COACH_WEIGHTS.expression),
+    scene: scoreGen(COACH_WEIGHTS.scene),
+    audience: scoreGen(COACH_WEIGHTS.audience),
+    optimizer: scoreGen(COACH_WEIGHTS.optimizer),
   };
   const totalScore =
     scores.logic + scores.keypoint + scores.expression + scores.scene + scores.audience + scores.optimizer;
@@ -376,7 +392,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
       role: "逻辑结构",
       avatarChar: "逻",
       score: scores.logic,
-      maxScore: 25,
+      maxScore: COACH_WEIGHTS.logic,
       summary: "主线推进有条理，结论先行可以让听众更快进入状态。注意中段衔接不要跳跃。",
       revisions: [
         {
@@ -392,7 +408,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
       role: "重点表达",
       avatarChar: "重",
       score: scores.keypoint,
-      maxScore: 20,
+      maxScore: COACH_WEIGHTS.keypoint,
       summary: "信息量基本覆盖，但部分铺垫过长，关键结论可以更早出现。",
       revisions: [
         {
@@ -408,7 +424,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
       role: "表达流畅",
       avatarChar: "表",
       score: scores.expression,
-      maxScore: 20,
+      maxScore: COACH_WEIGHTS.expression,
       summary: "节奏平稳，减少填充词后句子会更直接有力。注意长句拆分。",
       revisions: [
         {
@@ -424,7 +440,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
       role: "场景完成度",
       avatarChar: "景",
       score: scores.scene,
-      maxScore: 15,
+      maxScore: COACH_WEIGHTS.scene,
       summary: "措辞与场景基本匹配，注意根据听众调整技术语言密度，补齐场景必备信息。",
       revisions: [
         {
@@ -440,7 +456,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
       role: "听众理解度",
       avatarChar: "听",
       score: scores.audience,
-      maxScore: 10,
+      maxScore: COACH_WEIGHTS.audience,
       summary: "我基本听懂了整体进展，但具体数据没记住，结尾想追问下一步要什么支持。",
       revisions: [
         {
@@ -453,10 +469,10 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
     {
       id: "optimizer",
       name: "优化教练",
-      role: "优化潜力",
+      role: "整体成稿度",
       avatarChar: "优",
       score: scores.optimizer,
-      maxScore: 10,
+      maxScore: COACH_WEIGHTS.optimizer,
       summary: "综合各教练诊断，最需要改进的是结论先行和量化证据，下面给出一版可直接开口的优化稿。",
       revisions: [
         {
@@ -475,7 +491,7 @@ function generateFallbackReport(practiceId: string, fileName: string, transcript
     id: `r_${Date.now()}`,
     practiceId,
     totalScore,
-    percentile: 50 + Math.floor(Math.random() * 35),
+    percentile: null,
     overall: {
       summary: `本次练习（${fileName || "通用表达"}）整体不错。${
         hasTranscript ? "转写内容已记录。" : ""

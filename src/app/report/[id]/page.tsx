@@ -141,9 +141,11 @@ export default function ReportPage() {
             </div>
             <AnimatedScore value={report.totalScore} />
             <div className="relative text-xs text-white/80">满分 100</div>
-            <div className="relative mt-1 text-xs text-white/80">
-              超过 {report.percentile}% 的练习记录
-            </div>
+            {report.percentile != null && (
+              <div className="relative mt-1 text-xs text-white/80">
+                超过你 {report.percentile}% 的历史练习
+              </div>
+            )}
           </div>
 
           {/* 6 教练小卡：3 列 × 2 行 */}
@@ -412,15 +414,15 @@ function RevisionLine({
       <span
         className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold"
         style={{
-          background: muted ? "transparent" : "var(--soft-blue)",
-          color: muted ? "var(--quiet)" : "var(--blue-deep)",
+          background: muted ? "var(--lavender-soft)" : "var(--soft-blue)",
+          color: "var(--blue-deep)",
         }}
       >
         {label}
       </span>
       <p
         className={`text-[14px] leading-relaxed ${
-          muted ? "text-[var(--quiet)]" : bold ? "font-bold text-[var(--ink)]" : "text-[var(--ink)]"
+          bold ? "font-bold text-[var(--ink)]" : "text-[var(--ink)]"
         }`}
       >
         {text}
