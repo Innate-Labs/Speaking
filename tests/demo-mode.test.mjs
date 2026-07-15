@@ -1,0 +1,33 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  clearSpeakCoachStorage,
+  createMemoryStorage,
+  isDemoMode,
+} from "../src/lib/demo-mode.ts";
+
+test("isDemoMode only enables the exact true value", () => {
+  assert.equal(isDemoMode("true"), true);
+  assert.equal(isDemoMode("false"), false);
+  assert.equal(isDemoMode(undefined), false);
+});
+
+test("memory storage survives reads until it is cleared", () => {
+  const storage = createMemoryStorage();
+  storage.setItem("speakcoach_records", "one");
+  assert.equal(storage.getItem("speakcoach_records"), "one");
+  storage.clear();
+  assert.equal(storage.getItem("speakcoach_records"), null);
+});
+
+test("cleanup removes only SpeakCoach keys", () => {
+  const storage = createMemoryStorage();
+  storage.setItem("speakcoach_user", "user");
+  storage.setItem("speakcoach_file_1", "file");
+  storage.setItem("other_app", "keep");
+
+  assert.equal(clearSpeakCoachStorage(storage), 2);
+  assert.equal(storage.getItem("speakcoach_user"), null);
+  assert.equal(storage.getItem("speakcoach_file_1"), null);
+  assert.equal(storage.getItem("other_app"), "keep");
+});

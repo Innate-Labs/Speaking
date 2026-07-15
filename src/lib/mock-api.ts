@@ -1,4 +1,4 @@
-// 数据层：认证调用服务端 API，练习记录/趋势用 localStorage 持久化
+// 数据层：认证调用服务端 API，练习数据按运行模式选择浏览器或内存存储
 // 报告生成调用 /api/report/generate（DeepSeek）
 
 import type {
@@ -9,6 +9,13 @@ import type {
   AppUser,
 } from "@/types";
 import { genId } from "./utils";
+import {
+  DEMO_MODE,
+  DEMO_USER,
+  readAppStorage,
+  removeAppStorage,
+  writeAppStorage,
+} from "./demo-mode";
 
 const LS_USER = "speakcoach_user";
 const LS_RECORDS = "speakcoach_records";
@@ -50,9 +57,7 @@ export async function verifyOtp(
       return { error: data.error ?? "验证失败" };
     }
     const user = data.user as AppUser;
-    if (typeof window !== "undefined") {
-      localStorage.setItem(LS_USER, JSON.stringify(user));
-    }
+    writeAppStorage(LS_USER, JSON.stringify(user));
     return { user };
   } catch {
     return { error: "网络错误，请重试" };
@@ -60,52 +65,44 @@ export async function verifyOtp(
 }
 
 export function getCurrentUser(): AppUser | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(LS_USER);
+  if (DEMO_MODE) return DEMO_USER;
+  const raw = readAppStorage(LS_USER);
   return raw ? (JSON.parse(raw) as AppUser) : null;
 }
 
 export function logout(): void {
-  if (typeof window !== "undefined") {
-    localStorage.removeItem(LS_USER);
-  }
+  removeAppStorage(LS_USER);
 }
 
 // 更新当前用户姓名（仅允许修改姓名）
 export function updateDisplayName(name: string): AppUser | null {
-  if (typeof window === "undefined") return null;
-  const raw = localStorage.getItem(LS_USER);
+  if (DEMO_MODE) return DEMO_USER;
+  const raw = readAppStorage(LS_USER);
   if (!raw) return null;
   const user = JSON.parse(raw) as AppUser;
   user.displayName = name.trim();
-  localStorage.setItem(LS_USER, JSON.stringify(user));
+  writeAppStorage(LS_USER, JSON.stringify(user));
   return user;
 }
 
 // ---------- 练习记录 ----------
 
 function loadRecords(): PracticeRecord[] {
-  if (typeof window === "undefined") return [];
-  const raw = localStorage.getItem(LS_RECORDS);
+  const raw = readAppStorage(LS_RECORDS);
   return raw ? (JSON.parse(raw) as PracticeRecord[]) : [];
 }
 
 function saveRecords(records: PracticeRecord[]): void {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(LS_RECORDS, JSON.stringify(records));
-  }
+  writeAppStorage(LS_RECORDS, JSON.stringify(records));
 }
 
 function loadReports(): Record<string, PracticeReport> {
-  if (typeof window === "undefined") return {};
-  const raw = localStorage.getItem(LS_REPORTS);
+  const raw = readAppStorage(LS_REPORTS);
   return raw ? (JSON.parse(raw) as Record<string, PracticeReport>) : {};
 }
 
 function saveReports(reports: Record<string, PracticeReport>): void {
-  if (typeof window !== "undefined") {
-    localStorage.setItem(LS_REPORTS, JSON.stringify(reports));
-  }
+  writeAppStorage(LS_REPORTS, JSON.stringify(reports));
 }
 
 export async function createPractice(
@@ -129,9 +126,7 @@ export async function createPractice(
   records.unshift(record);
   saveRecords(records);
   // 存文稿内容供报告生成用（不入 PracticeRecord 类型，单独存）
-  if (typeof window !== "undefined") {
-    localStorage.setItem(`speakcoach_file_${id}`, fileContent);
-  }
+  writeAppStorage(`speakcoach_file_${id}`, fileContent);
   return { id };
 }
 
@@ -176,9 +171,7 @@ export async function generateReport(practiceId: string): Promise<PracticeReport
 
   // 读取文稿内容
   let fileContent = "";
-  if (typeof window !== "undefined") {
-    fileContent = localStorage.getItem(`speakcoach_file_${practiceId}`) ?? "";
-  }
+  fileContent = readAppStorage(`speakcoach_file_${practiceId}`) ?? "";
 
   // 本次之前的历史总分：用于打分校准（前松后严）和百分位计算
   const prevScores = records
@@ -217,7 +210,7 @@ export async function generateReport(practiceId: string): Promise<PracticeReport
       createdAt: data.createdAt ?? new Date().toISOString(),
     };
 
-    // 保存报告到 localStorage
+    // 保存报告到当前运行模式对应的存储
     const reports = loadReports();
     reports[practiceId] = report;
     saveReports(reports);
