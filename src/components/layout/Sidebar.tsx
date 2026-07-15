@@ -9,6 +9,7 @@ import { useAppStore } from "@/stores/app-store";
 import { Avatar } from "@/components/ui/Avatar";
 import { ProfileDialog } from "@/components/ui/ProfileDialog";
 import { logout } from "@/lib/mock-api";
+import { DEMO_MODE } from "@/lib/demo-mode";
 
 const NAV = [
   { href: "/", label: "开始", icon: Sparkles },
@@ -115,8 +116,22 @@ export function Sidebar() {
 
       <div className="flex-1" />
 
-      {/* 个人资料 + 设置下拉菜单 */}
-      <div className="relative" ref={menuRef}>
+      {DEMO_MODE ? (
+        <div className="flex items-center gap-3 rounded-2xl border border-[var(--line)] bg-[var(--paper)] p-3">
+          <Avatar char="演" size={40} />
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-bold text-[var(--ink)]">
+              演示访客
+            </div>
+            <div className="truncate text-xs text-[var(--muted)]">
+              数据刷新后清空
+            </div>
+          </div>
+        </div>
+      ) : (
+        <>
+          {/* 个人资料 + 设置下拉菜单 */}
+          <div className="relative" ref={menuRef}>
         {/* 下拉菜单（按钮上方） */}
         <AnimatePresence>
           {menuOpen && (
@@ -177,10 +192,12 @@ export function Sidebar() {
             <Settings size={16} />
           </button>
         </div>
-      </div>
+          </div>
 
-      {/* 个人资料弹窗（修改姓名） */}
-      <ProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} />
+          {/* 个人资料弹窗（修改姓名） */}
+          <ProfileDialog open={profileOpen} onClose={() => setProfileOpen(false)} />
+        </>
+      )}
     </aside>
   );
 }

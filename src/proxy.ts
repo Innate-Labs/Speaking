@@ -1,10 +1,21 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { DEMO_MODE, getDemoRedirectPath } from "@/lib/demo-mode";
 
 // Next.js 16: proxy 替代 middleware
 // 鉴权：未登录访问受保护路由 → 跳转登录
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
+  const demoRedirectPath = getDemoRedirectPath(pathname);
+
+  if (demoRedirectPath) {
+    const response = NextResponse.redirect(
+      new URL(demoRedirectPath, request.url)
+    );
+    response.cookies.delete("speakcoach_auth");
+    response.cookies.delete("speakcoach_otp");
+    return response;
+  }
 
   // 受保护路由
   const protectedRoutes = ["/", "/practice", "/report", "/records"];
@@ -23,7 +34,12 @@ export function proxy(request: NextRequest) {
     // return NextResponse.redirect(loginUrl);
   }
 
-  return NextResponse.next();
+  const response = NextResponse.next();
+  if (DEMO_MODE) {
+    response.cookies.delete("speakcoach_auth");
+    response.cookies.delete("speakcoach_otp");
+  }
+  return response;
 }
 
 export const config = {

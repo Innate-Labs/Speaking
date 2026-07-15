@@ -6,6 +6,7 @@ import type {
   AppUser,
 } from "@/types";
 import { getCurrentUser } from "@/lib/mock-api";
+import { DEMO_MODE, DEMO_USER } from "@/lib/demo-mode";
 
 interface AppState {
   // 用户
@@ -35,6 +36,7 @@ interface AppState {
   transcript: TranscriptLine[];
   addTranscript: (line: TranscriptLine) => void;
   resetPractice: () => void;
+  resetSession: () => void;
 
   // Toast
   toast: string | null;
@@ -42,9 +44,9 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  user: null,
+  user: DEMO_MODE ? DEMO_USER : null,
   setUser: (u) => set({ user: u }),
-  initUser: () => set({ user: getCurrentUser() }),
+  initUser: () => set({ user: DEMO_MODE ? DEMO_USER : getCurrentUser() }),
 
   mode: "5min",
   setMode: (m) => set({ mode: m }),
@@ -71,6 +73,18 @@ export const useAppStore = create<AppState>((set) => ({
       elapsed: 0,
       pauseCount: 0,
       transcript: [],
+    }),
+  resetSession: () =>
+    set({
+      mode: "5min",
+      fileName: "",
+      fileContent: "",
+      practiceId: null,
+      status: "idle",
+      elapsed: 0,
+      pauseCount: 0,
+      transcript: [],
+      toast: null,
     }),
 
   toast: null,

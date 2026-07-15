@@ -23,6 +23,13 @@ export const DEMO_USER: AppUser = {
   phone: "",
 };
 
+export function getDemoRedirectPath(
+  pathname: string,
+  demoMode = DEMO_MODE
+): string | null {
+  return demoMode && pathname === "/login" ? "/" : null;
+}
+
 export function createMemoryStorage(): StorageLike {
   const values = new Map<string, string>();
 
